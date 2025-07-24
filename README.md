@@ -63,4 +63,4 @@ To run the example use the Chainlit CLI in terminal. The `-w` arguement watches 
 chainlit run examples/gui.py -w
 ```
 
-Then go to **[http://localhost:8000](http://localhost:8000)" in your browser and enter a prompt for the video that you want to generate. It'll take a few seconds to generate it.
+Then go to **[http://localhost:8000](http://localhost:8000)** in your browser and enter a prompt for the video that you want to generate. It'll take a few seconds to generate it.
