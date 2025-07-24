@@ -25,7 +25,6 @@ pip install -r requirements.txt
 Install the included SDK separately
 ```bash
 pip install -e ./rashed_sora_sdk
-cd ..
 ```
 
 ### 2.3 Configure Environment Variables
