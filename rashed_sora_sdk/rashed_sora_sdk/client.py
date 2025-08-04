@@ -29,7 +29,7 @@ from .models import (
     VideoGenerationJobList,
     VideoGeneration,
     AzureOpenAIVideoGenerationError,
-    JobStatus  # Added explicit import for JobStatus
+    JobStatus
 )
 import os
 import json
@@ -40,7 +40,6 @@ from typing import Dict, Any, Optional, List, BinaryIO, Union, Tuple
 from urllib.parse import urljoin
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
@@ -90,14 +89,14 @@ class SoraClient:
             - AZURE_OPENAI_ENDPOINT
             - AZURE_OPENAI_API_KEY
             - AZURE_OPENAI_DEPLOYMENT_NAME
-            - AZURE_AI_API_VERSION
+            - AZURE_OPENAI_API_VERSION
         """
         self.endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
         self.api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         self.deployment_name = deployment_name or os.environ.get(
             "AZURE_OPENAI_DEPLOYMENT_NAME")
         self.api_version = api_version or os.environ.get(
-            "AZURE_AI_API_VERSION", "2025-02-15-preview")
+            "AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
         self.timeout = timeout
 
         if not self.endpoint:
@@ -107,7 +106,6 @@ class SoraClient:
         if not self.deployment_name:
             raise ValueError("Azure OpenAI deployment name must be provided")
 
-        # Ensure endpoint ends with a slash
         if not self.endpoint.endswith("/"):
             self.endpoint += "/"
 
@@ -131,7 +129,7 @@ class SoraClient:
         """Get the base URL for API requests."""
         return urljoin(
             self.endpoint,
-            f"openai/deployments/{self.deployment_name}/video/generations/"
+            "openai/v1/video/generations/"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -161,15 +159,22 @@ class SoraClient:
         if isinstance(request, CreateVideoGenerationRequest):
             request_data = request.to_dict()
         else:
-            request_data = request
+            request_data = request.copy()
+
+        transformed_request = {
+            "model": self.deployment_name,
+            "prompt": request_data.get("prompt"),
+            "height": str(request_data.get("height", 1080)),
+            "width": str(request_data.get("width", 1080)),
+            "n_seconds": str(request_data.get("n_seconds", request_data.get("duration", 5))),
+            "n_variants": str(request_data.get("n_variants", request_data.get("variants", 1)))
+        }
 
         try:
-            # Validate the request parameters
-            logger.debug(
-                f"Validating video generation request: {request_data}")
+            logger.debug(f"Original request data: {request_data}")
+            logger.debug(f"Transformed request: {transformed_request}")
             validate_request(request_data)
         except ValidationError as e:
-            # Convert ValidationError to SoraClientError for consistent error handling
             logger.error(f"Request validation failed: {str(e)}")
             raise SoraClientError(
                 message=f"Invalid request parameters: {str(e)}",
@@ -178,13 +183,46 @@ class SoraClient:
 
         session = await self._get_session()
         url = self._build_url("jobs")
+        headers = self._get_headers()
+
+        logger.info(f"Making API request to: {url}")
+        logger.info(f"Request headers: {headers}")
+        logger.info(f"Request payload: {transformed_request}")
 
         try:
-            logger.debug(
-                f"Creating video generation job with params: {request_data}")
-            async with session.post(url, headers=self._get_headers(), json=request_data) as response:
-                data = await self._handle_response(response)
-                return VideoGenerationJob.from_dict(data)
+            async with session.post(url, headers=headers, json=transformed_request) as response:
+                logger.info(f"Response status: {response.status}")
+                logger.info(f"Response headers: {dict(response.headers)}")
+
+                response_text = await response.text()
+                logger.info(f"Response body: {response_text}")
+
+                try:
+                    response_data = json.loads(
+                        response_text) if response_text else {}
+                except json.JSONDecodeError:
+                    response_data = {"raw_response": response_text}
+
+                if not response.ok:
+                    logger.error(
+                        f"API request failed with status {response.status}")
+                    logger.error(f"Error response: {response_data}")
+
+                    error_message = "Unknown error"
+                    if isinstance(response_data, dict):
+                        error_message = response_data.get("error", {}).get("message",
+                                                                           response_data.get("message",
+                                                                                             f"HTTP {response.status}: {response.reason}"))
+
+                    raise SoraClientError(
+                        message=error_message,
+                        status_code=response.status,
+                        error_details=response_data
+                    )
+
+                logger.info("API request successful")
+                return VideoGenerationJob.from_dict(response_data)
+
         except SoraClientError:
             raise
         except Exception as e:
@@ -196,12 +234,31 @@ class SoraClient:
         """Build the full URL for an API request."""
         url = urljoin(self._get_base_url(), path)
 
-        # Add API version parameter
-        query_params = {"api-version": self.api_version}
+        query_params = {"api-version": "preview"}
         if params:
             query_params.update(params)
 
-        # Append query parameters
+        query_string = "&".join([f"{k}={v}" for k, v in query_params.items()])
+        if query_string:
+            url += f"?{query_string}"
+
+        return url
+
+    def _get_content_base_url(self) -> str:
+        """Get the base URL for content API requests."""
+        return urljoin(
+            self.endpoint,
+            "openai/v1/video/generations/"
+        )
+
+    def _build_content_url(self, path: str, params: Optional[Dict[str, str]] = None) -> str:
+        """Build the full URL for a content API request."""
+        url = urljoin(self._get_content_base_url(), path)
+
+        query_params = {"api-version": "preview"}
+        if params:
+            query_params.update(params)
+
         query_string = "&".join([f"{k}={v}" for k, v in query_params.items()])
         if query_string:
             url += f"?{query_string}"
@@ -212,16 +269,36 @@ class SoraClient:
         """Handle API response and raise appropriate exceptions."""
         content_type = response.headers.get("Content-Type", "")
 
+        logger.debug(f"Response status: {response.status}")
+        logger.debug(f"Response content-type: {content_type}")
+
         if "application/json" in content_type:
-            data = await response.json()
+            response_text = await response.text()
+            logger.debug(f"Raw response text: {response_text}")
+
+            try:
+                data = json.loads(response_text) if response_text else {}
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.error(f"Raw response: {response_text}")
+                raise SoraClientError(
+                    message=f"Invalid JSON response: {response_text}",
+                    status_code=response.status
+                )
+
             if not response.ok:
+                logger.error(f"API error response: {data}")
                 error_details = None
                 if isinstance(data, dict):
                     error_details = data
-                    error_message = data.get(
-                        "message", f"Error: {response.status}")
+                    error_message = (
+                        data.get("error", {}).get("message") if isinstance(data.get("error"), dict) else
+                        data.get("message") or
+                        data.get("error") or
+                        f"HTTP {response.status}: {response.reason}"
+                    )
                 else:
-                    error_message = f"Error: {response.status}"
+                    error_message = f"HTTP {response.status}: {response.reason}"
 
                 raise SoraClientError(
                     message=error_message,
@@ -230,16 +307,14 @@ class SoraClient:
                 )
             return data
 
-        # Not JSON, might be binary data or another format
         if not response.ok:
             error_text = await response.text()
+            logger.error(f"Non-JSON error response: {error_text}")
             raise SoraClientError(
-                message=f"Error: {response.status}, {error_text}",
+                message=f"HTTP {response.status}: {error_text}",
                 status_code=response.status
             )
 
-        # For binary responses (like video content)
-        # This method will return an empty dict, and the caller should handle the binary data directly
         return {}
 
     async def get_video_generation_job(self, job_id: str) -> VideoGenerationJob:
@@ -318,7 +393,6 @@ class SoraClient:
         try:
             logger.debug(f"Deleting video generation job: {job_id}")
             async with session.delete(url, headers=self._get_headers()) as response:
-                # DELETE request returns 204 No Content on success
                 if response.status == 204:
                     return True
                 await self._handle_response(response)
@@ -372,13 +446,13 @@ class SoraClient:
             SoraClientError: If the API request fails
         """
         session = await self._get_session()
-        url = self._build_url(f"{generation_id}/video/content")
+        url = self._build_content_url(f"{generation_id}/content/video")
 
         try:
             logger.debug(
                 f"Getting video content for generation: {generation_id}")
+            logger.debug(f"Video content URL: {url}")
             headers = self._get_headers()
-            # Remove Content-Type header for binary response
             headers.pop("Content-Type", None)
 
             async with session.get(url, headers=headers) as response:
@@ -430,13 +504,13 @@ class SoraClient:
             SoraClientError: If the API request fails
         """
         session = await self._get_session()
-        url = self._build_url(f"{generation_id}/gif/content")
+        url = self._build_content_url(f"{generation_id}/content/gif")
 
         try:
             logger.debug(
                 f"Getting GIF content for generation: {generation_id}")
+            logger.debug(f"GIF content URL: {url}")
             headers = self._get_headers()
-            # Remove Content-Type header for binary response
             headers.pop("Content-Type", None)
 
             async with session.get(url, headers=headers) as response:
@@ -510,7 +584,6 @@ class SoraClient:
                     logger.error(error_msg)
                     raise SoraClientError(error_msg)
 
-                # Collect all the completed generations
                 completed_generations = job.generations
                 return job, completed_generations
 

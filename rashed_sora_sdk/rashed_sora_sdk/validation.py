@@ -23,26 +23,26 @@ logger = logging.getLogger(__name__)
 
 # Supported video resolutions (width, height)
 SUPPORTED_RESOLUTIONS = [
-    (360, 360),  # 360x360p
-    (640, 360),  # 640x360p
-    (480, 480),  # 480x480p
-    (854, 480),  # 854x480p
-    (720, 720),  # 720x720p
+    (480, 480),   # 480x480p
+    (480, 854),   # 480x854p
+    (854, 480),   # 854x480p
+    (720, 720),   # 720x720p
+    (720, 1280),  # 720x1280p
     (1280, 720),  # 1280x720p
     (1080, 1080),  # 1080x1080p
+    (1080, 1920),  # 1080x1920p
     (1920, 1080)  # 1920x1080p
 ]
 
-# Maximum duration in seconds for different resolution categories
-MAX_DURATION = {
-    'standard': 20,  # Standard resolution (up to 720p)
-    'high': 10       # High resolution (1080p)
-}
+# Duration limits (all resolutions now support 1-20 seconds)
+MIN_DURATION = 1
+MAX_DURATION = 20
 
-# Maximum number of variants for different resolution categories
+# Maximum number of variants based on resolution category
 MAX_VARIANTS = {
-    'standard': 2,   # Standard resolution (up to 720p)
-    'high': 1        # High resolution (1080p)
+    '1080p': 1,      # 1080p resolutions: disabled (1 variant only)
+    '720p': 2,       # 720p resolutions: max 2 variants
+    'other': 4       # Other resolutions: max 4 variants
 }
 
 # Maximum number of pending tasks allowed
@@ -52,6 +52,25 @@ MAX_PENDING_TASKS = 1
 class ValidationError(Exception):
     """Exception raised for validation errors in the Sora SDK."""
     pass
+
+
+def _get_resolution_category(width: int, height: int) -> str:
+    """
+    Determine the resolution category for variant limits.
+
+    Args:
+        width: Video width in pixels
+        height: Video height in pixels
+
+    Returns:
+        Resolution category: '1080p', '720p', or 'other'
+    """
+    if width >= 1080 or height >= 1080:
+        return '1080p'
+    elif width >= 720 or height >= 720:
+        return '720p'
+    else:
+        return 'other'
 
 
 def validate_resolution(width: int, height: int) -> Tuple[int, int]:
@@ -80,30 +99,26 @@ def validate_resolution(width: int, height: int) -> Tuple[int, int]:
 
 def validate_duration(width: int, height: int, duration: int) -> int:
     """
-    Validate that the duration is within the allowed limits for the resolution.
+    Validate that the duration is within the allowed limits.
 
     Args:
-        width: Video width in pixels
-        height: Video height in pixels
+        width: Video width in pixels (not used in new API but kept for compatibility)
+        height: Video height in pixels (not used in new API but kept for compatibility)
         duration: Video duration in seconds
 
     Returns:
         Validated duration in seconds
 
     Raises:
-        ValidationError: If the duration exceeds the maximum allowed
+        ValidationError: If the duration is outside the allowed range
     """
-    # Determine if this is high resolution
-    is_high_res = width >= 1080 or height >= 1080
-    max_duration = MAX_DURATION['high'] if is_high_res else MAX_DURATION['standard']
-
-    if duration > max_duration:
+    if duration < MIN_DURATION:
         raise ValidationError(
-            f"Maximum duration for {width}x{height} is {max_duration} seconds. Got {duration} seconds."
-        )
+            f"Duration must be at least {MIN_DURATION} second. Got {duration} seconds.")
 
-    if duration <= 0:
-        raise ValidationError("Duration must be greater than 0 seconds.")
+    if duration > MAX_DURATION:
+        raise ValidationError(
+            f"Duration must be at most {MAX_DURATION} seconds. Got {duration} seconds.")
 
     return duration
 
@@ -123,19 +138,56 @@ def validate_variants(width: int, height: int, variants: int) -> int:
     Raises:
         ValidationError: If the number of variants exceeds the maximum allowed
     """
-    # Determine if this is high resolution
-    is_high_res = width >= 1080 or height >= 1080
-    max_variants = MAX_VARIANTS['high'] if is_high_res else MAX_VARIANTS['standard']
-
-    if variants > max_variants:
-        raise ValidationError(
-            f"Maximum variants for {width}x{height} is {max_variants}. Got {variants} variants."
-        )
-
     if variants <= 0:
         raise ValidationError("Number of variants must be greater than 0.")
 
+    category = _get_resolution_category(width, height)
+    max_variants = MAX_VARIANTS[category]
+
+    if variants > max_variants:
+        if category == '1080p':
+            raise ValidationError(
+                f"1080p resolutions only support 1 variant. Got {variants} variants."
+            )
+        elif category == '720p':
+            raise ValidationError(
+                f"720p resolutions support maximum {max_variants} variants. Got {variants} variants."
+            )
+        else:
+            raise ValidationError(
+                f"This resolution supports maximum {max_variants} variants. Got {variants} variants."
+            )
+
     return variants
+
+
+def get_max_duration_for_resolution(width: int, height: int) -> int:
+    """
+    Get the maximum duration allowed for a given resolution.
+
+    Args:
+        width: Video width in pixels
+        height: Video height in pixels
+
+    Returns:
+        Maximum duration in seconds
+    """
+    return MAX_DURATION
+
+
+def get_max_variants_for_resolution(width: int, height: int) -> int:
+    """
+    Get the maximum variants allowed for a given resolution.
+
+    Args:
+        width: Video width in pixels
+        height: Video height in pixels
+
+    Returns:
+        Maximum number of variants
+    """
+    category = _get_resolution_category(width, height)
+    return MAX_VARIANTS[category]
 
 
 def validate_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,16 +203,13 @@ def validate_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
     Raises:
         ValidationError: If any validation fails
     """
-    # Extract parameters
     width = request_data.get('width')
     height = request_data.get('height')
     n_seconds = request_data.get('n_seconds')
     n_variants = request_data.get('n_variants', 1)
 
-    # Validate individual parameters
     validate_resolution(width, height)
     validate_duration(width, height, n_seconds)
     validate_variants(width, height, n_variants)
 
-    # Return the validated request
     return request_data
