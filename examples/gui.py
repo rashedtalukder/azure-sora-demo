@@ -1,3 +1,17 @@
+#    Copyright 2025 Rashed Talukder
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
 import os
 import chainlit as cl
 import asyncio
@@ -81,16 +95,19 @@ async def setup_agent(settings):
         messages.append(
             f"⚠️ Duration reduced to {max_duration}s (maximum for {resolution})")
         settings["duration"] = max_duration
+        duration = max_duration
 
     if variants > max_variants:
         messages.append(
             f"⚠️ Variants reduced to {max_variants} (maximum for {resolution})")
         settings["variants"] = max_variants
+        variants = max_variants
+
+    cl.user_session.set("chatSettings", settings)
 
     if messages:
         await cl.Message(content="\n".join(messages)).send()
 
-    # Determine resolution category for display
     if width >= 1080 or height >= 1080:
         res_type = "1080p"
     elif width >= 720 or height >= 720:
@@ -102,7 +119,7 @@ async def setup_agent(settings):
         content=f"📋 **Resolution:** {resolution} ({res_type})\n"
                 f"⏱️ **Duration Range:** {MIN_DURATION}-{MAX_DURATION}s\n"
                 f"🎬 **Max Variants:** {max_variants}\n"
-                f"✅ **Current Settings:** {settings['duration']}s, {settings['variants']} variant{'s' if settings['variants'] > 1 else ''}"
+                f"✅ **Current Settings:** {duration}s, {variants} variant{'s' if variants > 1 else ''}"
     ).send()
 
 
@@ -114,10 +131,16 @@ async def on_message(message: cl.Message):
         return
 
     settings = cl.user_session.get("chatSettings", {})
-    resolution = settings.get(
-        "resolution", f"{SUPPORTED_RESOLUTIONS[0][0]}x{SUPPORTED_RESOLUTIONS[0][1]}")
-    duration = settings.get("duration", 5)
-    variants = settings.get("variants", 1)
+
+    if not settings:
+        resolution = f"{SUPPORTED_RESOLUTIONS[0][0]}x{SUPPORTED_RESOLUTIONS[0][1]}"
+        duration = 5
+        variants = 1
+    else:
+        resolution = settings.get(
+            "resolution", f"{SUPPORTED_RESOLUTIONS[0][0]}x{SUPPORTED_RESOLUTIONS[0][1]}")
+        duration = settings.get("duration", 5)
+        variants = settings.get("variants", 1)
 
     width, height = map(int, resolution.split('x'))
 
