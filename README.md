@@ -33,7 +33,7 @@ Rename and modify the **sample.env** file or create a new `.env` file in the roo
 AZURE_OPENAI_ENDPOINT="https://{{YOUR_AI_PROJECT_RESOURCE_NAME}}.services.ai.azure.com"
 AZURE_OPENAI_API_KEY="{{YOUR AOAI KEY}}
 AZURE_OPENAI_DEPLOYMENT_NAME="{{MODEL_DEPLOYMENT_NAME}}"
-AZURE_AI_API_VERSION="2025-02-15-preview"
+AZURE_AI_API_VERSION="preview"
 ```
 
 ## 3. Generate a video
