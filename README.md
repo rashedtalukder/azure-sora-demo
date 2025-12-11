@@ -1,4 +1,4 @@
-# Azure OpenAI Sora Image Generator Example
+# Azure OpenAI Sora SDK and Video Generator Example
 This example takes command line arguments to generate videos using a Azure OpenAI Sora model and saves them to a ./outputs/ folder.
 
 ## Prerequisites
